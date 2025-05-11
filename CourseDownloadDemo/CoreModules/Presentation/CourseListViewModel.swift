@@ -74,8 +74,8 @@ final class CourseListViewModel: ObservableObject {
                 let module1 = CourseModule(
                     title: "Introduction to SwiftUI",
                     type: .video,
-                    fileURL: URL(string: "https://example.com/video1.mp4")!,
-                    fileSize: 104857600 // 100 MB
+                    fileURL: URL(string: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4")!,
+                    fileSize: 1073741824 // 1 GB (1024 MB)
                 )
                 
                 let module2 = CourseModule(

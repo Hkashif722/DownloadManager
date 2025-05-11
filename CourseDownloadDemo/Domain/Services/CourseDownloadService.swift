@@ -111,56 +111,60 @@ final class CourseDownloadService: CourseDownloadServiceProtocol {
         let fileExtension = module.fileURL.pathExtension
         
         // Start download
-        await downloadManager.startDownload(
-            id: module.id,
-            url: module.fileURL,
-            fileName: module.title,
-            fileType: fileExtension
-        )
+        do {
+            try await  downloadManager.startDownload(
+                id: module.id,
+                url: module.fileURL,
+                fileName: module.title,
+                fileType: fileExtension
+            )
+        } catch {
+            
+        }
     }
     
-    func pauseDownload(moduleID: UUID) async {
-        await downloadManager.pauseDownload(id: moduleID)
+    func pauseDownload(moduleID: UUID) async throws {
+        try await downloadManager.pauseDownload(id: moduleID)
     }
     
-    func resumeDownload(moduleID: UUID) async {
-        await downloadManager.resumeDownload(id: moduleID)
+    func resumeDownload(moduleID: UUID) async throws {
+        try await downloadManager.resumeDownload(id: moduleID)
     }
     
-    func cancelDownload(moduleID: UUID) async {
-        await downloadManager.cancelDownload(id: moduleID)
+    func cancelDownload(moduleID: UUID) async throws {
+        try await downloadManager.cancelDownload(id: moduleID)
     }
     
-    func deleteDownload(moduleID: UUID) async {
-        await downloadManager.deleteDownload(id: moduleID)
+    func deleteDownload(moduleID: UUID) async throws {
+        try await downloadManager.deleteDownload(id: moduleID)
     }
     
-    func downloadEntireCourse(_ course: Course) async {
+    func downloadEntireCourse(_ course: Course) async throws {
         for module in course.modules {
             await downloadModule(module)
         }
     }
     
-    func pauseAllCourseDownloads(_ course: Course) async {
+    func pauseAllCourseDownloads(_ course: Course)  async throws {
         for module in course.modules {
             if downloadManager.isDownloading(id: module.id) {
-                await pauseDownload(moduleID: module.id)
+               try await pauseDownload(moduleID: module.id)
             }
         }
     }
     
-    func resumeAllCourseDownloads(_ course: Course) async {
+    func resumeAllCourseDownloads(_ course: Course) async throws {
         for module in course.modules {
             if let state = modelStorage.getDownloadState(id: module.id)?.state, state == .paused {
-                await resumeDownload(moduleID: module.id)
+                try await resumeDownload(moduleID: module.id)
             }
         }
     }
     
-    func cancelAllCourseDownloads(_ course: Course) async {
+    func cancelAllCourseDownloads(_ course: Course) async throws {
         for module in course.modules {
             if downloadManager.isDownloading(id: module.id) {
-                await cancelDownload(moduleID: module.id)
+                try await cancelDownload(moduleID: module.id)
             }
         }
     }

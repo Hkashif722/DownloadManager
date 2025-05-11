@@ -38,6 +38,7 @@ struct ModuleRowView: View {
                     isPerformingAction: $isPerformingAction,
                     onAction: handleAction
                 )
+                .id(state) // Force view update when state changes
             }
             
             if state == .downloading || state == .paused {

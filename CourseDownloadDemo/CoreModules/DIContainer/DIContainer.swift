@@ -6,10 +6,6 @@ import OSLog
 final class DIContainer {
     static let shared = DIContainer()
     
-    private init() {
-        setupDependencies()
-    }
-    
     // Core dependencies
     lazy var networkClient: NetworkClientProtocol = {
         let client = NetworkClient(backgroundIdentifier: "com.app.CourseDownloader.background")
@@ -79,8 +75,4 @@ final class DIContainer {
     
     // Background completion handler for app delegate
     var backgroundCompletionHandler: (() -> Void)?
-    
-    private func setupDependencies() {
-        // Additional setup if needed
-    }
 }
