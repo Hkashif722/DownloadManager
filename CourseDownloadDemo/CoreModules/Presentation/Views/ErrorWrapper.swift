@@ -1,4 +1,12 @@
-/ Helper for alert binding
+//
+//  ErrorWrapper.swift
+//  CourseDownloadDemo
+//
+//  Created by Kashif Hussain on 10/05/25.
+//
+
+
+// Helper for alert binding
 struct ErrorWrapper: Identifiable {
     let id = UUID()
     let message: String

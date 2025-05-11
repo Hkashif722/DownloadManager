@@ -1,4 +1,17 @@
+//
+//  ProgressTracker.swift
+//  CourseDownloadDemo
+//
+//  Created by Kashif Hussain on 10/05/25.
+//
+
+
 // ProgressTracker/ProgressTracker.swift
+// ProgressTrackerProtocol.swift
+import Foundation
+import Combine
+
+// ProgressTracker.swift
 import Foundation
 import Combine
 import OSLog

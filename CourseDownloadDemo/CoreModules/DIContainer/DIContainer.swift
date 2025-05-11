@@ -1,6 +1,5 @@
-// MARK: - Dependency Injection
-
-// Presentation/DIContainer.swift
+// DIContainer.swift
+// DIContainer.swift
 import Foundation
 import OSLog
 
@@ -8,16 +7,12 @@ final class DIContainer {
     static let shared = DIContainer()
     
     private init() {
-        // Initialize dependencies
         setupDependencies()
     }
     
     // Core dependencies
     lazy var networkClient: NetworkClientProtocol = {
         let client = NetworkClient(backgroundIdentifier: "com.app.CourseDownloader.background")
-        client.configureBGSessionWithHandler { [weak self] in
-            self?.backgroundCompletionHandler?()
-        }
         return client
     }()
     
@@ -27,12 +22,8 @@ final class DIContainer {
         return ModelStorage()
     }()
     
-    lazy var downloadManager: DownloadManagerProtocol = {
-        return DownloadManager(
-            networkClient: networkClient,
-            fileManager: fileManager,
-            logger: Logger(subsystem: "com.app.CourseDownloader", category: "DownloadManager")
-        )
+    lazy var dataParser: DataParserProtocol = {
+        return DataParser()
     }()
     
     lazy var progressTracker: ProgressTrackerProtocol = {
@@ -41,6 +32,16 @@ final class DIContainer {
     
     lazy var errorHandler: ErrorHandlerProtocol = {
         return ErrorHandler()
+    }()
+    
+    lazy var downloadManager: DownloadManagerProtocol = {
+        return DownloadManager(
+            networkClient: networkClient,
+            fileManager: fileManager,
+            backgroundCompletionHandler: { [weak self] in
+                self?.backgroundCompletionHandler?()
+            }
+        )
     }()
     
     // Domain services
@@ -62,9 +63,16 @@ final class DIContainer {
     }()
     
     // ViewModels factory
-    func makeCourseListViewModel() -> CourseListViewModel {
+    @MainActor func makeCourseListViewModel() -> CourseListViewModel {
         return CourseListViewModel(
             courseRepository: courseRepository,
+            courseDownloadService: courseDownloadService
+        )
+    }
+    
+    @MainActor func makeCourseDetailViewModel(course: Course) -> CourseDetailViewModel {
+        return CourseDetailViewModel(
+            course: course,
             courseDownloadService: courseDownloadService
         )
     }
@@ -73,6 +81,6 @@ final class DIContainer {
     var backgroundCompletionHandler: (() -> Void)?
     
     private func setupDependencies() {
-        // Any additional setup can go here
+        // Additional setup if needed
     }
 }

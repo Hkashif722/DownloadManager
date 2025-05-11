@@ -1,3 +1,11 @@
+//
+//  CourseDetailViewModel.swift
+//  CourseDownloadDemo
+//
+//  Created by Kashif Hussain on 10/05/25.
+//
+
+
 // Presentation/ViewModels/CourseDetailViewModel.swift
 import Foundation
 import Combine
@@ -76,43 +84,73 @@ final class CourseDetailViewModel: ObservableObject {
     
     func downloadAllModules() {
         Task {
-            await courseDownloadService.downloadEntireCourse(course)
+            do {
+                try await courseDownloadService.downloadEntireCourse(course)
+            } catch {
+                
+            }
         }
     }
     
     func cancelAllDownloads() {
         Task {
-            await courseDownloadService.cancelAllCourseDownloads(course)
+            do {
+                try await courseDownloadService.cancelAllCourseDownloads(course)
+            } catch {
+                
+            }
+            
         }
     }
     
     func downloadModule(_ module: CourseModule) {
         Task {
-            await courseDownloadService.downloadModule(module)
+            do {
+                try await courseDownloadService.downloadModule(module)
+            } catch {
+                
+            }
         }
     }
     
     func pauseDownload(moduleID: UUID) {
         Task {
-            await courseDownloadService.pauseDownload(moduleID: moduleID)
+            do {
+                try await courseDownloadService.pauseDownload(moduleID: moduleID)
+            } catch {
+                
+            }
         }
     }
     
     func resumeDownload(moduleID: UUID) {
         Task {
-            await courseDownloadService.resumeDownload(moduleID: moduleID)
+            do {
+                try await courseDownloadService.resumeDownload(moduleID: moduleID)
+            } catch {
+                
+            }
         }
     }
     
     func cancelDownload(moduleID: UUID) {
         Task {
-            await courseDownloadService.cancelDownload(moduleID: moduleID)
+            do {
+                try await courseDownloadService.cancelDownload(moduleID: moduleID)
+            } catch {
+                
+            }
+           
         }
     }
     
     func deleteDownload(moduleID: UUID) {
         Task {
-            await courseDownloadService.deleteDownload(moduleID: moduleID)
+            do {
+                try await  courseDownloadService.deleteDownload(moduleID: moduleID)
+            } catch {
+                
+            }
         }
     }
 }

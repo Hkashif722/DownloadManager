@@ -1,3 +1,11 @@
+//
+//  DownloadRecord.swift
+//  CourseDownloadDemo
+//
+//  Created by Kashif Hussain on 10/05/25.
+//
+
+
 // PersistenceManager/DownloadRecord.swift
 import Foundation
 import SwiftData

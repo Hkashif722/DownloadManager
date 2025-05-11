@@ -1,21 +1,25 @@
-//
-//  NetworkClient.swift
-//  CourseDownloadDemo
-//
-//  Created by Kashif Hussain on 10/05/25.
-//
-
-
-// NetworkClient/NetworkClient.swift
+// NetworkClientProtocol.swift
 import Foundation
 import Combine
+
+
+
+// NetworkClient.swift
+import Foundation
+import Combine
+import OSLog
 
 final class NetworkClient: NetworkClientProtocol {
     private var session: URLSession
     private let configuration: URLSessionConfiguration
-    private var backgroundCompletionHandler: (() -> Void)?
+    private let logger: Logger
     
-    init(backgroundIdentifier: String? = nil) {
+    init(
+        backgroundIdentifier: String? = nil,
+        logger: Logger = Logger(subsystem: "com.app.CourseDownloader", category: "NetworkClient")
+    ) {
+        self.logger = logger
+        
         if let identifier = backgroundIdentifier {
             let config = URLSessionConfiguration.background(withIdentifier: identifier)
             config.isDiscretionary = false
@@ -28,18 +32,17 @@ final class NetworkClient: NetworkClientProtocol {
         self.session = URLSession(configuration: self.configuration)
     }
     
-    func configureBGSessionWithHandler(_ completionHandler: @escaping () -> Void) {
-        self.backgroundCompletionHandler = completionHandler
-        let delegate = NetworkSessionDelegate(client: self)
+    func configureBGSessionWithDelegate(_ delegate: URLSessionDownloadDelegate) {
         self.session = URLSession(configuration: self.configuration, delegate: delegate, delegateQueue: nil)
+        logger.info("Configured background session with delegate")
     }
     
-    func download(url: URL, toFile destinationURL: URL) async throws {
+    func download(url: URL) async throws -> (URL, URLResponse) {
         do {
-            let (downloadedURL, _) = try await session.download(from: url)
-            try FileManager.default.moveItem(at: downloadedURL, to: destinationURL)
+            return try await session.download(from: url)
         } catch {
-            throw NetworkError.unknown(error)
+            logger.error("Download failed: \(error.localizedDescription)")
+            throw mapError(error)
         }
     }
     
@@ -47,6 +50,7 @@ final class NetworkClient: NetworkClientProtocol {
         let request = URLRequest(url: url)
         let task = session.downloadTask(with: request)
         let progress = task.progress
+        logger.info("Created download task for URL: \(url.absoluteString)")
         return (task, progress)
     }
     
@@ -58,7 +62,18 @@ final class NetworkClient: NetworkClientProtocol {
         }
     }
     
-    func backgroundCompletionHandlerCalled() {
-        backgroundCompletionHandler?()
+    private func mapError(_ error: Error) -> NetworkError {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cancelled:
+                return .cancelled
+            case .badURL:
+                return .invalidURL
+            default:
+                return .unknown(urlError)
+            }
+        } else {
+            return .unknown(error)
+        }
     }
 }

@@ -1,0 +1,214 @@
+//
+//  CourseDownloadServiceProtocol.swift
+//  CourseDownloadDemo
+//
+//  Created by Kashif Hussain on 10/05/25.
+//
+
+
+// Domain/Services/CourseDownloadService.swift
+// CourseDownloadService.swift
+import Foundation
+import Combine
+import OSLog
+
+final class CourseDownloadService: CourseDownloadServiceProtocol {
+    private let downloadManager: DownloadManagerProtocol
+    private let modelStorage: ModelStorageProtocol
+    private let fileManager: FileManagerProtocol
+    private let progressTracker: ProgressTrackerProtocol
+    private let errorHandler: ErrorHandlerProtocol
+    private let logger: Logger
+    
+    private var statePublishers: [UUID: CurrentValueSubject<DownloadState, Never>] = [:]
+    private var progressPublishers: [UUID: CurrentValueSubject<Double, Never>] = [:]
+    private var courseProgressPublishers: [UUID: CurrentValueSubject<Double, Never>] = [:]
+    
+    private var cancellables = Set<AnyCancellable>()
+    
+    init(
+        downloadManager: DownloadManagerProtocol,
+        modelStorage: ModelStorageProtocol,
+        fileManager: FileManagerProtocol,
+        progressTracker: ProgressTrackerProtocol,
+        errorHandler: ErrorHandlerProtocol,
+        logger: Logger = Logger(subsystem: "com.app.CourseDownloader", category: "CourseDownloadService")
+    ) {
+        self.downloadManager = downloadManager
+        self.modelStorage = modelStorage
+        self.fileManager = fileManager
+        self.progressTracker = progressTracker
+        self.errorHandler = errorHandler
+        self.logger = logger
+        
+        setupSubscriptions()
+    }
+    
+    private func setupSubscriptions() {
+        // Subscribe to download state changes
+        downloadManager.downloadStateChange
+            .sink { [weak self] id, state in
+                self?.handleStateChange(id: id, state: state)
+            }
+            .store(in: &cancellables)
+        
+        // Subscribe to download progress updates
+        downloadManager.downloadProgress
+            .sink { [weak self] id, progress in
+                self?.handleProgressUpdate(id: id, progress: progress)
+            }
+            .store(in: &cancellables)
+            
+        // Subscribe to error handling
+        errorHandler.errors
+            .sink { [weak self] error in
+                self?.logger.error("Error occurred: \(error)")
+            }
+            .store(in: &cancellables)
+    }
+    
+    // MARK: - Download state and progress management
+    
+    private func handleStateChange(id: UUID, state: DownloadState) {
+        // Update persistence
+        let savedState = modelStorage.getDownloadState(id: id)
+        modelStorage.saveDownloadState(
+            id: id,
+            state: state,
+            progress: savedState?.progress ?? 0.0,
+            localURL: savedState?.localURL
+        )
+        
+        // Update publisher if exists
+        statePublishers[id]?.send(state)
+    }
+    
+    private func handleProgressUpdate(id: UUID, progress: Double) {
+        // Update persistence
+        if let savedState = modelStorage.getDownloadState(id: id) {
+            modelStorage.saveDownloadState(
+                id: id,
+                state: savedState.state,
+                progress: progress,
+                localURL: savedState.localURL
+            )
+        }
+        
+        // Update publisher if exists
+        progressPublishers[id]?.send(progress)
+        
+        // Update progress tracker
+        progressTracker.updateProgress(id: id, progress: progress)
+    }
+    
+    // MARK: - Public API
+    
+    func downloadModule(_ module: CourseModule) async {
+        // Track this download
+        progressTracker.trackDownload(id: module.id, groupID: module.courseID)
+        
+        // Get file extension from URL
+        let fileExtension = module.fileURL.pathExtension
+        
+        // Start download
+        await downloadManager.startDownload(
+            id: module.id,
+            url: module.fileURL,
+            fileName: module.title,
+            fileType: fileExtension
+        )
+    }
+    
+    func pauseDownload(moduleID: UUID) async {
+        await downloadManager.pauseDownload(id: moduleID)
+    }
+    
+    func resumeDownload(moduleID: UUID) async {
+        await downloadManager.resumeDownload(id: moduleID)
+    }
+    
+    func cancelDownload(moduleID: UUID) async {
+        await downloadManager.cancelDownload(id: moduleID)
+    }
+    
+    func deleteDownload(moduleID: UUID) async {
+        await downloadManager.deleteDownload(id: moduleID)
+    }
+    
+    func downloadEntireCourse(_ course: Course) async {
+        for module in course.modules {
+            await downloadModule(module)
+        }
+    }
+    
+    func pauseAllCourseDownloads(_ course: Course) async {
+        for module in course.modules {
+            if downloadManager.isDownloading(id: module.id) {
+                await pauseDownload(moduleID: module.id)
+            }
+        }
+    }
+    
+    func resumeAllCourseDownloads(_ course: Course) async {
+        for module in course.modules {
+            if let state = modelStorage.getDownloadState(id: module.id)?.state, state == .paused {
+                await resumeDownload(moduleID: module.id)
+            }
+        }
+    }
+    
+    func cancelAllCourseDownloads(_ course: Course) async {
+        for module in course.modules {
+            if downloadManager.isDownloading(id: module.id) {
+                await cancelDownload(moduleID: module.id)
+            }
+        }
+    }
+    
+    func getModuleDownloadState(moduleID: UUID) -> AnyPublisher<DownloadState, Never> {
+        if let publisher = statePublishers[moduleID] {
+            return publisher.eraseToAnyPublisher()
+        }
+        
+        // Create new publisher with initial value from storage
+        let initialState = modelStorage.getDownloadState(id: moduleID)?.state ?? .notDownloaded
+        let publisher = CurrentValueSubject<DownloadState, Never>(initialState)
+        statePublishers[moduleID] = publisher
+        
+        return publisher.eraseToAnyPublisher()
+    }
+    
+    func getModuleProgress(moduleID: UUID) -> AnyPublisher<Double, Never> {
+        if let publisher = progressPublishers[moduleID] {
+            return publisher.eraseToAnyPublisher()
+        }
+        
+        // Create new publisher with initial value from storage
+        let initialProgress = modelStorage.getDownloadState(id: moduleID)?.progress ?? 0.0
+        let publisher = CurrentValueSubject<Double, Never>(initialProgress)
+        progressPublishers[moduleID] = publisher
+        
+        return publisher.eraseToAnyPublisher()
+    }
+    
+    func getCourseDownloadProgress(courseID: UUID) -> AnyPublisher<Double, Never> {
+        if let publisher = courseProgressPublishers[courseID] {
+            return publisher.eraseToAnyPublisher()
+        }
+        
+        // Create new publisher
+        let publisher = CurrentValueSubject<Double, Never>(0.0)
+        courseProgressPublishers[courseID] = publisher
+        
+        // Subscribe to aggregate progress for this course
+        progressTracker.aggregateProgress
+            .filter { id, _ in id == courseID }
+            .map { _, progress in progress }
+            .sink { [weak self, weak publisher] progress in
+                publisher?.send(progress)
+            }
+            .store(in: &cancellables)
+        
+        return publisher.eraseToAnyPublisher()
+    }
+}

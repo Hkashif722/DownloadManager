@@ -1,20 +1,14 @@
-//
-//  DownloadManager.swift
-//  CourseDownloadDemo
-//
-//  Created by Kashif Hussain on 10/05/25.
-//
 
-
-// DownloadManager/DownloadManager.swift
+// DownloadManager.swift
 import Foundation
 import Combine
 import OSLog
 
-final class DownloadManager: DownloadManagerProtocol {
+final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownloadDelegate {
     private let networkClient: NetworkClientProtocol
     private let fileManager: FileManagerProtocol
     private let logger: Logger
+    private var backgroundCompletionHandler: (() -> Void)?
     
     private var downloadTasks: [UUID: DownloadTaskInfo] = [:]
     private let progressSubject = PassthroughSubject<(UUID, Double), Never>()
@@ -28,16 +22,26 @@ final class DownloadManager: DownloadManagerProtocol {
         stateChangeSubject.eraseToAnyPublisher()
     }
     
-    init(networkClient: NetworkClientProtocol, fileManager: FileManagerProtocol, logger: Logger = Logger(subsystem: "com.app.CourseDownloader", category: "DownloadManager")) {
+    init(
+        networkClient: NetworkClientProtocol,
+        fileManager: FileManagerProtocol,
+        backgroundCompletionHandler: (() -> Void)? = nil,
+        logger: Logger = Logger(subsystem: "com.app.CourseDownloader", category: "DownloadManager")
+    ) {
         self.networkClient = networkClient
         self.fileManager = fileManager
+        self.backgroundCompletionHandler = backgroundCompletionHandler
         self.logger = logger
+        super.init()
+        
+        // Configure network client with self as delegate
+        networkClient.configureBGSessionWithDelegate(self)
     }
     
     func startDownload(id: UUID, url: URL, fileName: String, fileType: String) async {
         if downloadTasks[id] != nil {
             // Already downloading, resume if paused
-            resumeDownload(id: id)
+            await resumeDownload(id: id)
             return
         }
         
@@ -136,7 +140,7 @@ final class DownloadManager: DownloadManagerProtocol {
         do {
             // Create directory for this download
             let directory = fileManager.getDownloadsDirectory().appendingPathComponent(id.uuidString)
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
             
             // Move downloaded file to permanent location
             let destinationURL = directory.appendingPathComponent(taskInfo.fileName)
@@ -167,5 +171,35 @@ final class DownloadManager: DownloadManagerProtocol {
     private func cleanupTask(id: UUID) {
         downloadTasks[id]?.progressObserver?.invalidate()
         downloadTasks[id] = nil
+    }
+    
+    // MARK: - URLSessionDownloadDelegate
+    
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        guard let taskID = downloadTask.taskDescription, let id = UUID(uuidString: taskID) else {
+            logger.error("Missing task ID for completed download")
+            return
+        }
+        
+        Task {
+            await handleDownloadCompletion(id: id, tempURL: location)
+        }
+    }
+    
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard
+            let downloadTask = task as? URLSessionDownloadTask,
+            let taskID = downloadTask.taskDescription,
+            let id = UUID(uuidString: taskID),
+            error != nil
+        else { return }
+        
+        handleDownloadFailure(id: id, error: error)
+    }
+    
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        DispatchQueue.main.async {
+            self.backgroundCompletionHandler?()
+        }
     }
 }

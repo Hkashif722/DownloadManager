@@ -1,3 +1,11 @@
+//
+//  DownloadManagerProtocol.swift
+//  CourseDownloadDemo
+//
+//  Created by Kashif Hussain on 10/05/25.
+//
+
+
 // DownloadManager/DownloadManagerProtocol.swift
 import Foundation
 import Combine
@@ -13,4 +21,6 @@ protocol DownloadManagerProtocol {
     func deleteDownload(id: UUID) async
     func isDownloading(id: UUID) -> Bool
     func getActiveDownloads() async -> [UUID]
+    func handleDownloadCompletion(id: UUID, tempURL: URL) async
+    func handleDownloadFailure(id: UUID, error: Error?)
 }

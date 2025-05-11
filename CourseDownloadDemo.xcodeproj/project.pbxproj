@@ -10,9 +10,22 @@
 		AE5351612DCF823D0090DBB7 /* CourseDownloadDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CourseDownloadDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AE53518C2DCF84110090DBB7 /* Exceptions for "CourseDownloadDemo" folder in "CourseDownloadDemo" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				CoreModules/PersistenceManager/FileManager.swift,
+			);
+			target = AE5351602DCF823D0090DBB7 /* CourseDownloadDemo */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AE5351632DCF823D0090DBB7 /* CourseDownloadDemo */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AE53518C2DCF84110090DBB7 /* Exceptions for "CourseDownloadDemo" folder in "CourseDownloadDemo" target */,
+			);
 			path = CourseDownloadDemo;
 			sourceTree = "<group>";
 		};

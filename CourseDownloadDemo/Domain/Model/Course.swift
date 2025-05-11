@@ -1,3 +1,11 @@
+//
+//  Course.swift
+//  CourseDownloadDemo
+//
+//  Created by Kashif Hussain on 10/05/25.
+//
+
+
 // Domain/Models/Course.swift
 import Foundation
 import SwiftData

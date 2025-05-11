@@ -11,8 +11,8 @@ import Foundation
 import Combine
 
 protocol NetworkClientProtocol {
-    func download(url: URL, toFile destinationURL: URL) async throws
+    func download(url: URL) async throws -> (URL, URLResponse)
     func downloadWithProgress(url: URL) -> (task: URLSessionDownloadTask, progress: Progress)
-    func configureBGSessionWithHandler(_ completionHandler: @escaping () -> Void)
+    func configureBGSessionWithDelegate(_ delegate: URLSessionDownloadDelegate)
     func getAllTasks() async -> [URLSessionTask]
 }

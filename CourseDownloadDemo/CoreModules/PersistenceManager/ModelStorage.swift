@@ -1,3 +1,11 @@
+//
+//  ModelStorage.swift
+//  CourseDownloadDemo
+//
+//  Created by Kashif Hussain on 10/05/25.
+//
+
+
 // PersistenceManager/ModelStorage.swift
 import Foundation
 import SwiftData
@@ -13,15 +21,35 @@ final class ModelStorage: ModelStorageProtocol {
         setupContainer()
     }
     
+    
+    // In ModelStorage.swift
     private func setupContainer() {
         do {
             // Replace with actual model schema
-            let schema = Schema([DownloadRecord.self])
-            let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+            let schema = Schema([
+                Course.self,
+                CourseModule.self,
+                DownloadRecord.self
+            ])
+            
+            let modelConfiguration = ModelConfiguration(
+                schema: schema,
+                isStoredInMemoryOnly: false,
+                allowsSave: true // Make sure saving is allowed
+            )
+            
+            print("Setting up SwiftData container with schema: \(schema)")
             modelContainer = try ModelContainer(for: schema, configurations: [modelConfiguration])
-            modelContext = modelContainer?.mainContext
+            Task {
+                await MainActor.run {
+                    modelContext = modelContainer?.mainContext
+                }
+            }
+          
+            print("ModelContext created: \(modelContext != nil)")
             logger.info("Model container setup successfully")
         } catch {
+            print("Failed to create model container: \(error)")
             logger.error("Failed to create model container: \(error.localizedDescription)")
         }
     }

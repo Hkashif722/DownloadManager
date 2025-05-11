@@ -1,9 +1,10 @@
-/ Presentation/ViewModels/CourseListViewModel.swift
+// Presentation/ViewModels/CourseListViewModel.swift
 import Foundation
 import Combine
 import SwiftUI
 import OSLog
 
+// CourseListViewModel
 @MainActor
 final class CourseListViewModel: ObservableObject {
     @Published var courses: [Course] = []
@@ -13,7 +14,6 @@ final class CourseListViewModel: ObservableObject {
     private let courseRepository: CourseRepositoryProtocol
     private let courseDownloadService: CourseDownloadServiceProtocol
     private let logger: Logger
-    private var cancellables = Set<AnyCancellable>()
     
     init(
         courseRepository: CourseRepositoryProtocol,
@@ -25,25 +25,44 @@ final class CourseListViewModel: ObservableObject {
         self.logger = logger
     }
     
+    // In CourseListViewModel's loadCourses method
     func loadCourses() {
         isLoading = true
         
         Task {
             do {
-                courses = try await courseRepository.getAllCourses()
-                isLoading = false
+                let loadedCourses = try await courseRepository.getAllCourses()
+                await MainActor.run {
+                    self.courses = loadedCourses
+                    self.isLoading = false
+                    print("Loaded \(loadedCourses.count) courses") // Log the count
+                    
+                    // Debug: Print details of each course
+                    for (index, course) in loadedCourses.enumerated() {
+                        print("Course \(index): \(course.title) with \(course.modules.count) modules")
+                    }
+                }
             } catch {
-                errorMessage = "Failed to load courses: \(error.localizedDescription)"
-                isLoading = false
+                await MainActor.run {
+                    self.errorMessage = "Failed to load courses: \(error.localizedDescription)"
+                    self.isLoading = false
+                    print("Error loading courses: \(error)")
+                }
                 logger.error("Failed to load courses: \(error.localizedDescription)")
             }
         }
     }
     
+    // Additional methods...
+    
+    // Add this to your CourseListViewModel
+    @MainActor
     func addSampleData() {
-        // Clear existing data first
+        isLoading = true
+        
         Task {
             do {
+                // Clear existing data first
                 let existingCourses = try await courseRepository.getAllCourses()
                 for course in existingCourses {
                     try await courseRepository.deleteCourse(course)
@@ -111,9 +130,15 @@ final class CourseListViewModel: ObservableObject {
                 logger.info("Sample data created successfully")
                 
                 // Reload courses
-                loadCourses()
+              
+                await MainActor.run {
+                    isLoading = false
+                    print("Attempting to reload courses after adding sample data")
+                    loadCourses() // Make sure this is called
+                }
             } catch {
                 errorMessage = "Failed to add sample data: \(error.localizedDescription)"
+                isLoading = false
                 logger.error("Failed to add sample data: \(error.localizedDescription)")
             }
         }
@@ -121,7 +146,12 @@ final class CourseListViewModel: ObservableObject {
     
     func verifyDownloadStates() {
         Task {
-            await courseRepository.verifyDownloadStates()
+            do {
+                try await  courseRepository.verifyDownloadStates()
+            } catch {
+                
+            }
         }
     }
 }
+

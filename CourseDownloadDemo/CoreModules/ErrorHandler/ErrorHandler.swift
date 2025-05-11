@@ -1,9 +1,19 @@
+//
+//  ErrorHandler.swift
+//  CourseDownloadDemo
+//
+//  Created by Kashif Hussain on 10/05/25.
+//
+
+
 // ErrorHandler/ErrorHandler.swift
 import Foundation
 import Combine
 import OSLog
 
 final class ErrorHandler: ErrorHandlerProtocol {
+   
+    
     private let errorsSubject = PassthroughSubject<AppError, Never>()
     private let logger: Logger
     
@@ -40,6 +50,12 @@ final class ErrorHandler: ErrorHandlerProtocol {
     func handleFileSystemError(_ message: String) {
         let appError = AppError.fileSystem(message)
         logger.error("File system error: \(message)")
+        errorsSubject.send(appError)
+    }
+    
+    func handleParsingError(_ message: String) {
+        let appError = AppError.parsing(message)
+        logger.error("Parsing error: \(message)")
         errorsSubject.send(appError)
     }
 }
