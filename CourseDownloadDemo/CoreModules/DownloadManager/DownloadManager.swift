@@ -1,19 +1,38 @@
-
+// DownloadManager.swift
+// DownloadManager.swift
+// DownloadManager.swift
 // DownloadManager.swift
 import Foundation
 import Combine
 import OSLog
 
-final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownloadDelegate {
+// Custom error type to avoid external dependencies
+enum DownloadError: Error, LocalizedError {
+    case taskNotFound(String)
+    case fileOperationFailed(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .taskNotFound(let message):
+            return message
+        case .fileOperationFailed(let message):
+            return message
+        }
+    }
+}
+
+final class DownloadManager: DownloadManagerProtocol {
+    // MARK: - Properties
     private let networkClient: NetworkClientProtocol
     private let fileManager: FileManagerProtocol
     private let logger: Logger
-    private var backgroundCompletionHandler: (() -> Void)?
+    private var sessionDelegate: NetworkSessionDelegate?
     
     private var downloadTasks: [UUID: DownloadTaskInfo] = [:]
     private let progressSubject = PassthroughSubject<(UUID, Double), Never>()
     private let stateChangeSubject = PassthroughSubject<(UUID, DownloadState), Never>()
     
+    // MARK: - Protocol Requirements
     var downloadProgress: AnyPublisher<(UUID, Double), Never> {
         progressSubject.eraseToAnyPublisher()
     }
@@ -22,6 +41,7 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
         stateChangeSubject.eraseToAnyPublisher()
     }
     
+    // MARK: - Initialization
     init(
         networkClient: NetworkClientProtocol,
         fileManager: FileManagerProtocol,
@@ -30,26 +50,35 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
     ) {
         self.networkClient = networkClient
         self.fileManager = fileManager
-        self.backgroundCompletionHandler = backgroundCompletionHandler
         self.logger = logger
-        super.init()
         
-        // Configure network client with self as delegate
-        networkClient.configureBGSessionWithDelegate(self)
+        // Create and configure delegate
+        self.sessionDelegate = NetworkSessionDelegate(downloadManager: self)
+        networkClient.configureBGSessionWithDelegate(sessionDelegate!)
+        
+        // Store background completion handler in DIContainer
+        if let handler = backgroundCompletionHandler {
+            DIContainer.shared.backgroundCompletionHandler = handler
+        }
     }
     
-    func startDownload(id: UUID, url: URL, fileName: String, fileType: String) async {
-        if downloadTasks[id] != nil {
-            // Already downloading, resume if paused
-            await resumeDownload(id: id)
+    // MARK: - Protocol Methods
+    func startDownload(id: UUID, url: URL, fileName: String, fileType: String) async throws {
+        // Check if already downloading
+        if let existingTask = downloadTasks[id] {
+            // If paused, resume it
+            if existingTask.task.state == .suspended {
+                try await resumeDownload(id: id)
+            }
             return
         }
         
+        // Create new download task
         let (task, progress) = networkClient.downloadWithProgress(url: url)
         task.taskDescription = id.uuidString
         
-        // Observe progress
-        let progressObserver = progress.observe(\.fractionCompleted) { [weak self] progress, _ in
+        // Observe progress with weak self to avoid retain cycle
+        let progressObserver = progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
             self?.progressSubject.send((id, progress.fractionCompleted))
         }
         
@@ -69,10 +98,9 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
         logger.info("Started download for \(id.uuidString)")
     }
     
-    func pauseDownload(id: UUID) async {
+    func pauseDownload(id: UUID) async throws {
         guard let taskInfo = downloadTasks[id] else {
-            logger.warning("No task found to pause for \(id.uuidString)")
-            return
+            throw DownloadError.taskNotFound("No active download found for id: \(id)")
         }
         
         taskInfo.task.suspend()
@@ -80,10 +108,9 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
         logger.info("Paused download for \(id.uuidString)")
     }
     
-    func resumeDownload(id: UUID) async {
+    func resumeDownload(id: UUID) async throws {
         guard let taskInfo = downloadTasks[id] else {
-            logger.warning("No task found to resume for \(id.uuidString)")
-            return
+            throw DownloadError.taskNotFound("No paused download found for id: \(id)")
         }
         
         taskInfo.task.resume()
@@ -91,9 +118,10 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
         logger.info("Resumed download for \(id.uuidString)")
     }
     
-    func cancelDownload(id: UUID) async {
+    func cancelDownload(id: UUID) async throws {
         guard let taskInfo = downloadTasks[id] else {
-            logger.warning("No task found to cancel for \(id.uuidString)")
+            // Not an error if task doesn't exist
+            logger.info("No task to cancel for \(id.uuidString)")
             return
         }
         
@@ -103,13 +131,13 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
         logger.info("Cancelled download for \(id.uuidString)")
     }
     
-    func deleteDownload(id: UUID) async {
-        // If downloading, cancel first
-        if let _ = downloadTasks[id] {
-            await cancelDownload(id: id)
+    func deleteDownload(id: UUID) async throws {
+        // Cancel if currently downloading
+        if downloadTasks[id] != nil {
+            try await cancelDownload(id: id)
         }
         
-        // Delete local file if it exists
+        // Delete downloaded file if it exists
         let directory = fileManager.getDownloadsDirectory().appendingPathComponent(id.uuidString)
         
         if fileManager.fileExists(atPath: directory.path) {
@@ -118,7 +146,7 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
                 stateChangeSubject.send((id, .notDownloaded))
                 logger.info("Deleted download for \(id.uuidString)")
             } catch {
-                logger.error("Failed to delete file for \(id.uuidString): \(error.localizedDescription)")
+                throw DownloadError.fileOperationFailed("Failed to delete file: \(error.localizedDescription)")
             }
         }
     }
@@ -131,7 +159,13 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
         return Array(downloadTasks.keys)
     }
     
+    // MARK: - Internal Methods for NetworkSessionDelegate
     func handleDownloadCompletion(id: UUID, tempURL: URL) async {
+        defer {
+            // Always clean up temp file
+            try? fileManager.removeItem(at: tempURL)
+        }
+        
         guard let taskInfo = downloadTasks[id] else {
             logger.warning("No task info found for completed download \(id.uuidString)")
             return
@@ -142,13 +176,28 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
             let directory = fileManager.getDownloadsDirectory().appendingPathComponent(id.uuidString)
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
             
-            // Move downloaded file to permanent location
-            let destinationURL = directory.appendingPathComponent(taskInfo.fileName)
-                .appendingPathExtension(taskInfo.fileType)
+            // Generate unique filename
+            let baseFileName = "\(taskInfo.fileName).\(taskInfo.fileType)"
+            let uniqueFileName = fileManager.getUniqueFileName(originalName: baseFileName, inDirectory: directory)
+            let destinationURL = directory.appendingPathComponent(uniqueFileName)
             
+            // Move file to permanent location
             try fileManager.moveItem(at: tempURL, to: destinationURL)
+            
+            // Update state
             stateChangeSubject.send((id, .downloaded))
-            logger.info("Download completed for \(id.uuidString)")
+            
+            // Save file location to storage
+            await MainActor.run {
+                DIContainer.shared.modelStorage.saveDownloadState(
+                    id: id,
+                    state: .downloaded,
+                    progress: 1.0,
+                    localURL: destinationURL
+                )
+            }
+            
+            logger.info("Download completed for \(id.uuidString) at \(destinationURL.path)")
         } catch {
             stateChangeSubject.send((id, .failed))
             logger.error("Download failed for \(id.uuidString): \(error.localizedDescription)")
@@ -158,48 +207,19 @@ final class DownloadManager: NSObject, DownloadManagerProtocol, URLSessionDownlo
     }
     
     func handleDownloadFailure(id: UUID, error: Error?) {
-        if let error = error {
-            logger.error("Download failed for \(id.uuidString): \(error.localizedDescription)")
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            logger.info("Download cancelled for \(id.uuidString)")
         } else {
-            logger.error("Download failed for \(id.uuidString) with unknown error")
+            logger.error("Download failed for \(id.uuidString): \(error?.localizedDescription ?? "Unknown error")")
+            stateChangeSubject.send((id, .failed))
         }
         
-        stateChangeSubject.send((id, .failed))
         cleanupTask(id: id)
     }
     
+    // MARK: - Private Methods
     private func cleanupTask(id: UUID) {
         downloadTasks[id]?.progressObserver?.invalidate()
         downloadTasks[id] = nil
-    }
-    
-    // MARK: - URLSessionDownloadDelegate
-    
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let taskID = downloadTask.taskDescription, let id = UUID(uuidString: taskID) else {
-            logger.error("Missing task ID for completed download")
-            return
-        }
-        
-        Task {
-            await handleDownloadCompletion(id: id, tempURL: location)
-        }
-    }
-    
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard
-            let downloadTask = task as? URLSessionDownloadTask,
-            let taskID = downloadTask.taskDescription,
-            let id = UUID(uuidString: taskID),
-            error != nil
-        else { return }
-        
-        handleDownloadFailure(id: id, error: error)
-    }
-    
-    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        DispatchQueue.main.async {
-            self.backgroundCompletionHandler?()
-        }
     }
 }

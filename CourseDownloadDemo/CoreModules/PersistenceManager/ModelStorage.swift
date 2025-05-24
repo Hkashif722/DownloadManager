@@ -11,21 +11,21 @@ import Foundation
 import SwiftData
 import OSLog
 
+@MainActor
 final class ModelStorage: ModelStorageProtocol {
     private var modelContainer: ModelContainer?
     private var modelContext: ModelContext?
     private let logger: Logger
+    private let setupSemaphore = DispatchSemaphore(value: 0)
+    private var isSetupComplete = false
     
     init(logger: Logger = Logger(subsystem: "com.app.CourseDownloader", category: "ModelStorage")) {
         self.logger = logger
         setupContainer()
     }
     
-    
-    // In ModelStorage.swift
     private func setupContainer() {
         do {
-            // Replace with actual model schema
             let schema = Schema([
                 Course.self,
                 CourseModule.self,
@@ -35,26 +35,30 @@ final class ModelStorage: ModelStorageProtocol {
             let modelConfiguration = ModelConfiguration(
                 schema: schema,
                 isStoredInMemoryOnly: false,
-                allowsSave: true // Make sure saving is allowed
+                allowsSave: true
             )
             
-            print("Setting up SwiftData container with schema: \(schema)")
+//            logger.info("Setting up SwiftData container with schema: \(schema)")
             modelContainer = try ModelContainer(for: schema, configurations: [modelConfiguration])
-            Task {
-                await MainActor.run {
-                    modelContext = modelContainer?.mainContext
-                }
-            }
-          
-            print("ModelContext created: \(modelContext != nil)")
+            modelContext = modelContainer?.mainContext
+            isSetupComplete = true
+            setupSemaphore.signal()
+            
             logger.info("Model container setup successfully")
         } catch {
-            print("Failed to create model container: \(error)")
             logger.error("Failed to create model container: \(error.localizedDescription)")
+            setupSemaphore.signal() // Signal even on error to prevent deadlock
         }
     }
     
+    private func waitForSetup() {
+        guard !isSetupComplete else { return }
+        _ = setupSemaphore.wait(timeout: .now() + 5.0) // 5 second timeout
+    }
+    
     func saveDownloadState(id: UUID, state: DownloadState, progress: Double, localURL: URL?) {
+        waitForSetup()
+        
         guard let context = modelContext else {
             logger.warning("No model context available")
             return
@@ -70,6 +74,7 @@ final class ModelStorage: ModelStorageProtocol {
                 existingRecord.state = state.rawValue
                 existingRecord.progress = progress
                 existingRecord.localURL = localURL
+                existingRecord.updatedAt = Date()
             } else {
                 // Create new record
                 let record = DownloadRecord(
@@ -89,6 +94,8 @@ final class ModelStorage: ModelStorageProtocol {
     }
     
     func getDownloadState(id: UUID) -> (state: DownloadState, progress: Double, localURL: URL?)? {
+        waitForSetup()
+        
         guard let context = modelContext else {
             logger.warning("No model context available")
             return nil
@@ -110,6 +117,8 @@ final class ModelStorage: ModelStorageProtocol {
     }
     
     func saveModel<T: PersistentModel>(_ model: T) throws {
+        waitForSetup()
+        
         guard let context = modelContext else {
             throw NSError(domain: "ModelStorage", code: 1, userInfo: [NSLocalizedDescriptionKey: "No model context available"])
         }
@@ -119,6 +128,8 @@ final class ModelStorage: ModelStorageProtocol {
     }
     
     func delete<T: PersistentModel>(_ model: T) throws {
+        waitForSetup()
+        
         guard let context = modelContext else {
             throw NSError(domain: "ModelStorage", code: 1, userInfo: [NSLocalizedDescriptionKey: "No model context available"])
         }
@@ -128,6 +139,8 @@ final class ModelStorage: ModelStorageProtocol {
     }
     
     func fetch<T: PersistentModel>(_ descriptor: FetchDescriptor<T>) throws -> [T] {
+        waitForSetup()
+        
         guard let context = modelContext else {
             throw NSError(domain: "ModelStorage", code: 1, userInfo: [NSLocalizedDescriptionKey: "No model context available"])
         }
@@ -136,6 +149,7 @@ final class ModelStorage: ModelStorageProtocol {
     }
     
     func getModelContext() -> ModelContext? {
+        waitForSetup()
         return modelContext
     }
 }

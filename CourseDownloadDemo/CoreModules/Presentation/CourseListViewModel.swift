@@ -4,7 +4,6 @@ import Combine
 import SwiftUI
 import OSLog
 
-// CourseListViewModel
 @MainActor
 final class CourseListViewModel: ObservableObject {
     @Published var courses: [Course] = []
@@ -25,9 +24,9 @@ final class CourseListViewModel: ObservableObject {
         self.logger = logger
     }
     
-    // In CourseListViewModel's loadCourses method
     func loadCourses() {
         isLoading = true
+        errorMessage = nil
         
         Task {
             do {
@@ -35,30 +34,21 @@ final class CourseListViewModel: ObservableObject {
                 await MainActor.run {
                     self.courses = loadedCourses
                     self.isLoading = false
-                    print("Loaded \(loadedCourses.count) courses") // Log the count
-                    
-                    // Debug: Print details of each course
-                    for (index, course) in loadedCourses.enumerated() {
-                        print("Course \(index): \(course.title) with \(course.modules.count) modules")
-                    }
+                    self.logger.info("Loaded \(loadedCourses.count) courses")
                 }
             } catch {
                 await MainActor.run {
                     self.errorMessage = "Failed to load courses: \(error.localizedDescription)"
                     self.isLoading = false
-                    print("Error loading courses: \(error)")
                 }
                 logger.error("Failed to load courses: \(error.localizedDescription)")
             }
         }
     }
     
-    // Additional methods...
-    
-    // Add this to your CourseListViewModel
-    @MainActor
     func addSampleData() {
         isLoading = true
+        errorMessage = nil
         
         Task {
             do {
@@ -69,76 +59,83 @@ final class CourseListViewModel: ObservableObject {
                 }
                 
                 // Add sample courses
-                let course1 = Course(title: "SwiftUI Mastery", description: "Learn advanced SwiftUI techniques")
+                let course1 = Course(
+                    title: "SwiftUI Mastery",
+                    description: "Learn advanced SwiftUI techniques"
+                )
                 
                 let module1 = CourseModule(
                     title: "Introduction to SwiftUI",
                     type: .video,
                     fileURL: URL(string: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4")!,
-                    fileSize: 1073741824 // 1 GB (1024 MB)
+                    fileSize: 5612595 // ~5.4 MB - actual size of this sample video
                 )
                 
                 let module2 = CourseModule(
                     title: "SwiftUI Architecture",
                     type: .pdf,
-                    fileURL: URL(string: "https://example.com/pdf1.pdf")!,
-                    fileSize: 20971520 // 20 MB
+                    fileURL: URL(string: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf")!,
+                    fileSize: 13264 // ~13 KB - small test PDF
                 )
                 
                 let module3 = CourseModule(
                     title: "SwiftUI Animations",
                     type: .video,
-                    fileURL: URL(string: "https://example.com/video2.mp4")!,
-                    fileSize: 52428800 // 50 MB
+                    fileURL: URL(string: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4")!,
+                    fileSize: 8134991 // ~7.8 MB
                 )
                 
+                // Set up relationships
                 course1.modules = [module1, module2, module3]
-                module1.course = course1
-                module1.courseID = course1.id
-                module2.course = course1
-                module2.courseID = course1.id
-                module3.course = course1
-                module3.courseID = course1.id
+                for module in course1.modules {
+                    module.course = course1
+                    module.courseID = course1.id
+                }
                 
                 try await courseRepository.saveCourse(course1)
                 
                 // Create another course
-                let course2 = Course(title: "Swift Concurrency", description: "Master asynchronous Swift programming")
+                let course2 = Course(
+                    title: "Swift Concurrency",
+                    description: "Master asynchronous Swift programming"
+                )
                 
                 let module4 = CourseModule(
                     title: "Async/Await Fundamentals",
                     type: .video,
-                    fileURL: URL(string: "https://example.com/video3.mp4")!,
-                    fileSize: 78643200 // 75 MB
+                    fileURL: URL(string: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4")!,
+                    fileSize: 7615829 // ~7.3 MB
                 )
                 
                 let module5 = CourseModule(
                     title: "Actor Model in Swift",
-                    type: .document,
-                    fileURL: URL(string: "https://example.com/doc1.docx")!,
-                    fileSize: 5242880 // 5 MB
+                    type: .pdf,
+                    fileURL: URL(string: "https://www.africau.edu/images/default/sample.pdf")!,
+                    fileSize: 3028 // ~3 KB
                 )
                 
+                // Set up relationships
                 course2.modules = [module4, module5]
-                module4.course = course2
-                module4.courseID = course2.id
-                module5.course = course2
-                module5.courseID = course2.id
+                for module in course2.modules {
+                    module.course = course2
+                    module.courseID = course2.id
+                }
                 
                 try await courseRepository.saveCourse(course2)
                 
                 logger.info("Sample data created successfully")
                 
                 // Reload courses
-              
                 await MainActor.run {
-                    isLoading = false
-                    print("Attempting to reload courses after adding sample data")
-                    loadCourses() // Make sure this is called
+                    self.isLoading = false
                 }
+                loadCourses()
+                
             } catch {
-                errorMessage = "Failed to add sample data: \(error.localizedDescription)"
-                isLoading = false
+                await MainActor.run {
+                    self.errorMessage = "Failed to add sample data: \(error.localizedDescription)"
+                    self.isLoading = false
+                }
                 logger.error("Failed to add sample data: \(error.localizedDescription)")
             }
         }
@@ -147,11 +144,14 @@ final class CourseListViewModel: ObservableObject {
     func verifyDownloadStates() {
         Task {
             do {
-                try await  courseRepository.verifyDownloadStates()
+                try await courseRepository.verifyDownloadStates()
+                logger.info("Successfully verified download states")
             } catch {
-                
+                logger.error("Failed to verify download states: \(error)")
+                await MainActor.run {
+                    self.errorMessage = "Failed to verify download states: \(error.localizedDescription)"
+                }
             }
         }
     }
 }
-

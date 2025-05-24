@@ -1,54 +1,62 @@
 // DIContainer.swift
 // DIContainer.swift
+// DIContainer.swift
 import Foundation
 import OSLog
 
 final class DIContainer {
     static let shared = DIContainer()
     
-    // Core dependencies
-    lazy var networkClient: NetworkClientProtocol = {
+    // Core dependencies - use private(set) to ensure thread safety
+    private(set) lazy var networkClient: NetworkClientProtocol = {
         let client = NetworkClient(backgroundIdentifier: "com.app.CourseDownloader.background")
         return client
     }()
     
-    lazy var fileManager: FileManagerProtocol = FileManager.default
+    private(set) lazy var fileManager: FileManagerProtocol = FileManager.default
     
-    lazy var modelStorage: ModelStorageProtocol = {
+    @MainActor
+    private(set) lazy var modelStorage: ModelStorageProtocol = {
         return ModelStorage()
     }()
     
-    lazy var dataParser: DataParserProtocol = {
+    private(set) lazy var dataParser: DataParserProtocol = {
         return DataParser()
     }()
     
-    lazy var progressTracker: ProgressTrackerProtocol = {
+    private(set) lazy var progressTracker: ProgressTrackerProtocol = {
         return ProgressTracker()
     }()
     
-    lazy var errorHandler: ErrorHandlerProtocol = {
+    private(set) lazy var errorHandler: ErrorHandlerProtocol = {
         return ErrorHandler()
     }()
     
-    lazy var downloadManager: DownloadManagerProtocol = {
+    @MainActor
+    private(set) lazy var downloadManager: DownloadManagerProtocol = {
         return DownloadManager(
             networkClient: networkClient,
             fileManager: fileManager,
             backgroundCompletionHandler: { [weak self] in
-                self?.backgroundCompletionHandler?()
+                DispatchQueue.main.async {
+                    self?.backgroundCompletionHandler?()
+                    self?.backgroundCompletionHandler = nil
+                }
             }
         )
     }()
     
     // Domain services
-    lazy var courseRepository: CourseRepositoryProtocol = {
+    @MainActor
+    private(set) lazy var courseRepository: CourseRepositoryProtocol = {
         return CourseRepository(
             modelStorage: modelStorage,
             fileManager: fileManager
         )
     }()
     
-    lazy var courseDownloadService: CourseDownloadServiceProtocol = {
+    @MainActor
+    private(set) lazy var courseDownloadService: CourseDownloadServiceProtocol = {
         return CourseDownloadService(
             downloadManager: downloadManager,
             modelStorage: modelStorage,
@@ -59,14 +67,16 @@ final class DIContainer {
     }()
     
     // ViewModels factory
-    @MainActor func makeCourseListViewModel() -> CourseListViewModel {
+    @MainActor
+    func makeCourseListViewModel() -> CourseListViewModel {
         return CourseListViewModel(
             courseRepository: courseRepository,
             courseDownloadService: courseDownloadService
         )
     }
     
-    @MainActor func makeCourseDetailViewModel(course: Course) -> CourseDetailViewModel {
+    @MainActor
+    func makeCourseDetailViewModel(course: Course) -> CourseDetailViewModel {
         return CourseDetailViewModel(
             course: course,
             courseDownloadService: courseDownloadService
@@ -75,4 +85,7 @@ final class DIContainer {
     
     // Background completion handler for app delegate
     var backgroundCompletionHandler: (() -> Void)?
+    
+    // Private initializer to enforce singleton
+    private init() {}
 }

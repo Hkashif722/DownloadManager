@@ -82,74 +82,91 @@ final class CourseDetailViewModel: ObservableObject {
         isDownloadingAny = course.modules.contains { moduleStates[$0.id] == .downloading }
     }
     
+    private func handleError(_ error: Error, context: String) {
+        logger.error("\(context): \(error.localizedDescription)")
+        errorMessage = "\(context): \(error.localizedDescription)"
+    }
+    
     func downloadAllModules() {
+        errorMessage = nil
         Task {
             do {
                 try await courseDownloadService.downloadEntireCourse(course)
+                logger.info("Started downloading all modules for course: \(self.course.title)")
             } catch {
-                
+                handleError(error, context: "Failed to download course")
             }
         }
     }
     
     func cancelAllDownloads() {
+        errorMessage = nil
         Task {
             do {
                 try await courseDownloadService.cancelAllCourseDownloads(course)
+                logger.info("Cancelled all downloads for course: \(self.course.title)")
             } catch {
-                
+                handleError(error, context: "Failed to cancel downloads")
             }
-            
         }
     }
     
     func downloadModule(_ module: CourseModule) {
+        errorMessage = nil
         Task {
             do {
                 try await courseDownloadService.downloadModule(module)
+                logger.info("Started downloading module: \(module.title)")
             } catch {
-                
+                handleError(error, context: "Failed to download module")
             }
         }
     }
     
     func pauseDownload(moduleID: UUID) {
+        errorMessage = nil
         Task {
             do {
                 try await courseDownloadService.pauseDownload(moduleID: moduleID)
+                logger.info("Paused download for module: \(moduleID)")
             } catch {
-                
+                handleError(error, context: "Failed to pause download")
             }
         }
     }
     
     func resumeDownload(moduleID: UUID) {
+        errorMessage = nil
         Task {
             do {
                 try await courseDownloadService.resumeDownload(moduleID: moduleID)
+                logger.info("Resumed download for module: \(moduleID)")
             } catch {
-                
+                handleError(error, context: "Failed to resume download")
             }
         }
     }
     
     func cancelDownload(moduleID: UUID) {
+        errorMessage = nil
         Task {
             do {
                 try await courseDownloadService.cancelDownload(moduleID: moduleID)
+                logger.info("Cancelled download for module: \(moduleID)")
             } catch {
-                
+                handleError(error, context: "Failed to cancel download")
             }
-           
         }
     }
     
     func deleteDownload(moduleID: UUID) {
+        errorMessage = nil
         Task {
             do {
-                try await  courseDownloadService.deleteDownload(moduleID: moduleID)
+                try await courseDownloadService.deleteDownload(moduleID: moduleID)
+                logger.info("Deleted download for module: \(moduleID)")
             } catch {
-                
+                handleError(error, context: "Failed to delete download")
             }
         }
     }

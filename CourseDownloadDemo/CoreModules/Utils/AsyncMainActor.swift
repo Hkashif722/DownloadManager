@@ -15,3 +15,4 @@ struct AsyncMainActor {
         return try await operation()
     }
 }
+

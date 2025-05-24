@@ -5,9 +5,7 @@
 //  Created by Kashif Hussain on 10/05/25.
 //
 
-
 // NetworkClient/NetworkSessionDelegate.swift
-// NetworkSessionDelegate.swift
 import Foundation
 import OSLog
 
@@ -30,16 +28,18 @@ class NetworkSessionDelegate: NSObject, URLSessionDownloadDelegate {
         
         logger.info("Download completed for task with module ID: \(moduleID.uuidString)")
         
-        // IMPORTANT: The temporary URL is only valid during this function call
-        // We need to immediately copy the file to a safe location
-        let tempDir = FileManager.default.temporaryDirectory
+        // CRITICAL FIX: Handle the file synchronously within this callback
+        // The temporary file at 'location' is only valid during this method call
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory
         let safeTempLocation = tempDir.appendingPathComponent(UUID().uuidString)
         
         do {
-            try FileManager.default.copyItem(at: location, to: safeTempLocation)
+            // Copy immediately while the file is still valid
+            try fileManager.copyItem(at: location, to: safeTempLocation)
             logger.info("Successfully copied download to safe location: \(safeTempLocation.path)")
             
-            // Now that we have a safe copy, we can process it asynchronously
+            // Now we can safely handle it asynchronously
             Task {
                 await manager.handleDownloadCompletion(id: moduleID, tempURL: safeTempLocation)
             }
@@ -68,6 +68,9 @@ class NetworkSessionDelegate: NSObject, URLSessionDownloadDelegate {
     
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         logger.info("URLSession did finish events for background session")
-        DIContainer.shared.backgroundCompletionHandler?()
+        DispatchQueue.main.async {
+            DIContainer.shared.backgroundCompletionHandler?()
+            DIContainer.shared.backgroundCompletionHandler = nil
+        }
     }
 }
