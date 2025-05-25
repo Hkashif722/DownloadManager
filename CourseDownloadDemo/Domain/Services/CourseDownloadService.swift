@@ -10,6 +10,7 @@
 import Foundation
 import Combine
 import OSLog
+import SwiftData
 
 final class CourseDownloadService: CourseDownloadServiceProtocol {
     private let downloadManager: DownloadManagerProtocol
@@ -69,22 +70,55 @@ final class CourseDownloadService: CourseDownloadServiceProtocol {
     // MARK: - Download state and progress management
     
     private func handleStateChange(id: UUID, state: DownloadState) {
-        // Update persistence
-        let savedState = modelStorage.getDownloadState(id: id)
-        let localURL: URL? = state == .downloaded ? savedState?.localURL : nil
+        // Update persistence based on state
+        if state == .downloaded {
+            // When download completes, we should have the URL from the completion handler
+            // The URL will be set by the download manager
+            let savedState = modelStorage.getDownloadState(id: id)
+            modelStorage.saveDownloadState(
+                id: id,
+                state: state,
+                progress: 1.0,
+                localURL: savedState?.localURL
+            )
+        } else if state == .notDownloaded {
+            // When reverting to not downloaded, clean up the record
+            modelStorage.deleteDownloadState(id: id)
+        } else {
+            // For other states, update without URL
+            let savedState = modelStorage.getDownloadState(id: id)
+            modelStorage.saveDownloadState(
+                id: id,
+                state: state,
+                progress: savedState?.progress ?? 0.0,
+                localURL: savedState?.localURL
+            )
+        }
         
-        modelStorage.saveDownloadState(
-            id: id,
-            state: state,
-            progress: state == .downloaded ? 1.0 : (savedState?.progress ?? 0.0),
-            localURL: localURL
-        )
-        
-        // CRITICAL FIX: Ensure publisher exists before sending
+        // Ensure publisher exists before sending
         let publisher = getOrCreateStatePublisher(for: id)
         publisher.send(state)
         
-        // Log state changes
+        // Update the module in persistence
+        Task { @MainActor in
+            do {
+                let descriptor = FetchDescriptor<CourseModule>(predicate: #Predicate { $0.id == id })
+                if let module = try modelStorage.fetch(descriptor).first {
+                    module.downloadState = state
+                    if state == .downloaded {
+                        module.downloadProgress = 1.0
+                    } else if state == .notDownloaded {
+                        module.downloadProgress = 0.0
+                        module.localFileURL = nil
+                    }
+                    module.updatedAt = Date()
+                    try modelStorage.saveModel(module)
+                }
+            } catch {
+                logger.error("Failed to update module state: \(error)")
+            }
+        }
+        
         logger.info("Module \(id.uuidString) state changed to: \(state.rawValue)")
     }
     
@@ -195,7 +229,14 @@ final class CourseDownloadService: CourseDownloadServiceProtocol {
     
     func deleteDownload(moduleID: UUID) async throws {
         do {
+            // Delete the physical file and update states
             try await downloadManager.deleteDownload(id: moduleID)
+            
+            // Clean up the download record
+            await MainActor.run {
+                modelStorage.deleteDownloadState(id: moduleID)
+            }
+            
             logger.info("Deleted download for module: \(moduleID)")
         } catch {
             logger.error("Failed to delete download: \(error)")

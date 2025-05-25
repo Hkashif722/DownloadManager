@@ -171,18 +171,35 @@ final class CourseDetailViewModel: ObservableObject {
     }
     
     func deleteDownload(moduleID: UUID) {
-        errorMessage = nil
-        Task {
-            do {
-                try await courseDownloadService.deleteDownload(moduleID: moduleID)
-                logger.info("Deleted download for module: \(moduleID)")
-                // After deletion, refresh the state to ensure UI updates
-                if let downloadService = courseDownloadService as? CourseDownloadService {
-                    downloadService.refreshModuleState(moduleID: moduleID)
+            errorMessage = nil
+            Task {
+                do {
+                    try await courseDownloadService.deleteDownload(moduleID: moduleID)
+                    logger.info("Deleted download for module: \(moduleID)")
+                    
+                    // Force update the UI state
+                    await MainActor.run {
+                        self.moduleStates[moduleID] = .notDownloaded
+                        self.moduleProgress[moduleID] = 0.0
+                        
+                        // Update the module object directly
+                        if let module = self.course.modules.first(where: { $0.id == moduleID }) {
+                            module.downloadState = .notDownloaded
+                            module.downloadProgress = 0.0
+                            module.localFileURL = nil
+                        }
+                        
+                        // Force a view update
+                        self.objectWillChange.send()
+                    }
+                    
+                    // Refresh the state to ensure UI updates
+                    if let downloadService = courseDownloadService as? CourseDownloadService {
+                        downloadService.refreshModuleState(moduleID: moduleID)
+                    }
+                } catch {
+                    handleError(error, context: "Failed to delete download")
                 }
-            } catch {
-                handleError(error, context: "Failed to delete download")
             }
         }
-    }
 }

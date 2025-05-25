@@ -79,57 +79,74 @@ final class CourseRepository: CourseRepositoryProtocol {
     }
     
     @MainActor
-    func verifyDownloadStates() async throws {
-        // Get all modules
-        let descriptor = FetchDescriptor<CourseModule>()
-        let modules = try modelStorage.fetch(descriptor)
-        
-        logger.info("Verifying download states for \(modules.count) modules")
-        
-        var fixedCount = 0
-        
-        for module in modules {
-            var needsUpdate = false
-            
-            // Verify downloaded modules
-            if module.downloadState == .downloaded {
-                // Check from persistent storage first
-                if let storedState = modelStorage.getDownloadState(id: module.id),
-                   let localURL = storedState.localURL,
-                   fileManager.fileExists(atPath: localURL.path) {
-                    // File exists, update module's local URL if needed
-                    if module.localFileURL != localURL {
-                        module.localFileURL = localURL
-                        needsUpdate = true
-                    }
-                    logger.info("Verified downloaded module: \(module.id)")
-                } else {
-                    // File missing, fix state
-                    logger.warning("File missing for module \(module.id) marked as downloaded")
-                    module.downloadState = .notDownloaded
-                    module.downloadProgress = 0
-                    module.localFileURL = nil
-                    needsUpdate = true
-                    fixedCount += 1
-                }
-            }
-            
-            // Reset downloading/paused states (these shouldn't persist between app launches)
-            if module.downloadState == .downloading || module.downloadState == .paused {
-                logger.warning("Resetting lingering download state for module: \(module.id)")
-                module.downloadState = .notDownloaded
-                module.downloadProgress = 0
-                needsUpdate = true
-                fixedCount += 1
-            }
-            
-            // Save updates if needed
-            if needsUpdate {
-                module.updatedAt = Date()
-                try modelStorage.saveModel(module)
-            }
-        }
-        
-        logger.info("Finished verifying download states. Fixed \(fixedCount) inconsistencies.")
-    }
+      func verifyDownloadStates() async throws {
+          // Get all modules
+          let descriptor = FetchDescriptor<CourseModule>()
+          let modules = try modelStorage.fetch(descriptor)
+          
+          logger.info("Verifying download states for \(modules.count) modules")
+          
+          var fixedCount = 0
+          
+          for module in modules {
+              var needsUpdate = false
+              
+              // Check persistent storage for download state
+              if let storedState = modelStorage.getDownloadState(id: module.id) {
+                  // Sync state from DownloadRecord
+                  module.downloadState = storedState.state
+                  module.downloadProgress = storedState.progress
+                  module.localFileURL = storedState.localURL
+                  
+                  // Verify downloaded modules have their files
+                  if storedState.state == .downloaded {
+                      if let localURL = storedState.localURL,
+                         fileManager.fileExists(atPath: localURL.path) {
+                          // File exists, state is correct
+                          logger.info("Verified downloaded module: \(module.id)")
+                      } else {
+                          // File missing, fix both records
+                          logger.warning("File missing for module \(module.id) marked as downloaded")
+                          module.downloadState = .notDownloaded
+                          module.downloadProgress = 0
+                          module.localFileURL = nil
+                          
+                          // Delete the invalid download record
+                          modelStorage.deleteDownloadState(id: module.id)
+                          fixedCount += 1
+                      }
+                  }
+                  
+                  // Reset downloading/paused states
+                  if storedState.state == .downloading || storedState.state == .paused {
+                      logger.warning("Resetting lingering download state for module: \(module.id)")
+                      module.downloadState = .notDownloaded
+                      module.downloadProgress = 0
+                      
+                      // Delete the invalid download record
+                      modelStorage.deleteDownloadState(id: module.id)
+                      fixedCount += 1
+                  }
+                  
+                  needsUpdate = true
+              } else {
+                  // No download record exists, ensure module reflects this
+                  if module.downloadState != .notDownloaded {
+                      module.downloadState = .notDownloaded
+                      module.downloadProgress = 0
+                      module.localFileURL = nil
+                      needsUpdate = true
+                      fixedCount += 1
+                  }
+              }
+              
+              // Save updates if needed
+              if needsUpdate {
+                  module.updatedAt = Date()
+                  try modelStorage.saveModel(module)
+              }
+          }
+          
+          logger.info("Finished verifying download states. Fixed \(fixedCount) inconsistencies.")
+      }
 }

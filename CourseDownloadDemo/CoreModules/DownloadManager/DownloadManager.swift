@@ -196,18 +196,40 @@ final class DownloadManager: DownloadManagerProtocol {
             try await cancelDownload(id: id)
         }
         
-        // Delete downloaded file if it exists
-        let directory = fileManager.getDownloadsDirectory().appendingPathComponent(id.uuidString)
+        // Try to get the file URL from persistence first
+        var fileDeleted = false
         
-        if fileManager.fileExists(atPath: directory.path) {
-            do {
-                try fileManager.removeItem(at: directory)
-                stateChangeSubject.send((id, .notDownloaded))
-                logger.info("Deleted download for \(id.uuidString)")
-            } catch {
-                throw DownloadError.fileOperationFailed("Failed to delete file: \(error.localizedDescription)")
+        await MainActor.run {
+            if let downloadState = DIContainer.shared.modelStorage.getDownloadState(id: id),
+               let localURL = downloadState.localURL,
+               fileManager.fileExists(atPath: localURL.path) {
+                do {
+                    // Delete the specific file
+                    try fileManager.removeItem(at: localURL)
+                    fileDeleted = true
+                    logger.info("Deleted file at: \(localURL.path)")
+                } catch {
+                    logger.error("Failed to delete file at \(localURL.path): \(error)")
+                }
             }
         }
+        
+        // Also try the legacy directory approach as fallback
+        if !fileDeleted {
+            let directory = fileManager.getDownloadsDirectory().appendingPathComponent(id.uuidString)
+            if fileManager.fileExists(atPath: directory.path) {
+                do {
+                    try fileManager.removeItem(at: directory)
+                    logger.info("Deleted legacy directory for \(id.uuidString)")
+                } catch {
+                    logger.error("Failed to delete legacy directory: \(error)")
+                }
+            }
+        }
+        
+        // Always send state change even if file wasn't found
+        stateChangeSubject.send((id, .notDownloaded))
+        logger.info("Completed delete operation for \(id.uuidString)")
     }
     
     func isDownloading(id: UUID) -> Bool {
@@ -243,6 +265,16 @@ final class DownloadManager: DownloadManagerProtocol {
             // Move file to permanent location
             try fileManager.moveItem(at: tempURL, to: destinationURL)
             
+            // CRITICAL: Save the download state with the final URL
+            await MainActor.run {
+                DIContainer.shared.modelStorage.saveDownloadState(
+                    id: id,
+                    state: .downloaded,
+                    progress: 1.0,
+                    localURL: destinationURL
+                )
+            }
+            
             // Send final progress update
             progressSubject.send((id, 1.0))
             
@@ -260,6 +292,8 @@ final class DownloadManager: DownloadManagerProtocol {
         
         cleanupTask(id: id)
     }
+    
+   
     
     func handleDownloadFailure(id: UUID, error: Error?) {
         if let urlError = error as? URLError, urlError.code == .cancelled {

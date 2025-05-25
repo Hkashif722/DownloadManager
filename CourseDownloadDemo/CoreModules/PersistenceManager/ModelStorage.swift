@@ -152,4 +152,27 @@ final class ModelStorage: ModelStorageProtocol {
         waitForSetup()
         return modelContext
     }
+    
+    func deleteDownloadState(id: UUID) {
+           waitForSetup()
+           
+           guard let context = modelContext else {
+               logger.warning("No model context available")
+               return
+           }
+           
+           do {
+               let descriptor = FetchDescriptor<DownloadRecord>(predicate: #Predicate { $0.id == id })
+               let existingRecords = try context.fetch(descriptor)
+               
+               for record in existingRecords {
+                   context.delete(record)
+               }
+               
+               try context.save()
+               logger.info("Deleted download state for \(id.uuidString)")
+           } catch {
+               logger.error("Failed to delete download state: \(error.localizedDescription)")
+           }
+       }
 }
