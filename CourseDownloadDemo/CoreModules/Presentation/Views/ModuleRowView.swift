@@ -21,6 +21,15 @@ struct ModuleRowView: View {
     
     @State private var isPerformingAction: Bool = false
     
+    // Computed property to determine effective state based on progress
+    private var effectiveState: DownloadState {
+        // If we're at 100% progress and still showing downloading, treat as downloaded
+        if state == .downloading && progress >= 0.99 {
+            return .downloaded
+        }
+        return state
+    }
+    
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
@@ -33,18 +42,18 @@ struct ModuleRowView: View {
                 Spacer()
                 
                 ModuleActionButton(
-                    state: state,
+                    state: effectiveState, // Use effective state
                     progress: progress,
                     isPerformingAction: $isPerformingAction,
                     onAction: handleAction
                 )
-                .id(state) // Force view update when state changes
+                .id("\(module.id)-\(effectiveState.rawValue)") // Force view update when state changes
             }
             
-            if state == .downloading || state == .paused {
+            if effectiveState == .downloading || effectiveState == .paused {
                 VStack(alignment: .leading) {
                     HStack {
-                        Text(state == .downloading ? "Downloading:" : "Paused:")
+                        Text(effectiveState == .downloading ? "Downloading:" : "Paused:")
                             .font(.caption)
                         
                         Text("\(Int(progress * 100))%")
@@ -56,6 +65,11 @@ struct ModuleRowView: View {
                         .progressViewStyle(LinearProgressViewStyle())
                 }
                 .padding(.top, 4)
+            } else if effectiveState == .downloaded {
+                Text("Downloaded")
+                    .font(.caption)
+                    .foregroundColor(.green)
+                    .padding(.top, 4)
             }
         }
         .padding(.vertical, 4)
@@ -83,7 +97,7 @@ struct ModuleRowView: View {
     private func handleAction() {
         isPerformingAction = true
         
-        switch state {
+        switch effectiveState { // Use effective state
         case .notDownloaded, .failed:
             onDownload()
         case .downloading:

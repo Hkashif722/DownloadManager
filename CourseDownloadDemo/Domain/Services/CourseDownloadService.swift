@@ -7,8 +7,6 @@
 
 
 // Domain/Services/CourseDownloadService.swift
-// CourseDownloadService.swift
-// Domain/Services/CourseDownloadService.swift
 import Foundation
 import Combine
 import OSLog
@@ -78,12 +76,13 @@ final class CourseDownloadService: CourseDownloadServiceProtocol {
         modelStorage.saveDownloadState(
             id: id,
             state: state,
-            progress: savedState?.progress ?? 0.0,
+            progress: state == .downloaded ? 1.0 : (savedState?.progress ?? 0.0),
             localURL: localURL
         )
         
-        // Update publisher if exists
-        statePublishers[id]?.send(state)
+        // CRITICAL FIX: Ensure publisher exists before sending
+        let publisher = getOrCreateStatePublisher(for: id)
+        publisher.send(state)
         
         // Log state changes
         logger.info("Module \(id.uuidString) state changed to: \(state.rawValue)")
@@ -100,11 +99,40 @@ final class CourseDownloadService: CourseDownloadServiceProtocol {
             )
         }
         
-        // Update publisher if exists
-        progressPublishers[id]?.send(progress)
+        // CRITICAL FIX: Ensure publisher exists before sending
+        let publisher = getOrCreateProgressPublisher(for: id)
+        publisher.send(progress)
         
         // Update progress tracker
         progressTracker.updateProgress(id: id, progress: progress)
+    }
+    
+    // MARK: - Publisher Management (FIX)
+    
+    private func getOrCreateStatePublisher(for id: UUID) -> CurrentValueSubject<DownloadState, Never> {
+        if let publisher = statePublishers[id] {
+            return publisher
+        }
+        
+        // Create new publisher with initial value from storage
+        let initialState = modelStorage.getDownloadState(id: id)?.state ?? .notDownloaded
+        let publisher = CurrentValueSubject<DownloadState, Never>(initialState)
+        statePublishers[id] = publisher
+        
+        return publisher
+    }
+    
+    private func getOrCreateProgressPublisher(for id: UUID) -> CurrentValueSubject<Double, Never> {
+        if let publisher = progressPublishers[id] {
+            return publisher
+        }
+        
+        // Create new publisher with initial value from storage
+        let initialProgress = modelStorage.getDownloadState(id: id)?.progress ?? 0.0
+        let publisher = CurrentValueSubject<Double, Never>(initialProgress)
+        progressPublishers[id] = publisher
+        
+        return publisher
     }
     
     // MARK: - Public API
@@ -202,7 +230,8 @@ final class CourseDownloadService: CourseDownloadServiceProtocol {
     
     func pauseAllCourseDownloads(_ course: Course) async throws {
         for module in course.modules {
-            if downloadManager.isDownloading(id: module.id) {
+            let currentState = getOrCreateStatePublisher(for: module.id).value
+            if currentState == .downloading {
                 do {
                     try await pauseDownload(moduleID: module.id)
                 } catch {
@@ -214,7 +243,8 @@ final class CourseDownloadService: CourseDownloadServiceProtocol {
     
     func resumeAllCourseDownloads(_ course: Course) async throws {
         for module in course.modules {
-            if let state = modelStorage.getDownloadState(id: module.id)?.state, state == .paused {
+            let currentState = getOrCreateStatePublisher(for: module.id).value
+            if currentState == .paused {
                 do {
                     try await resumeDownload(moduleID: module.id)
                 } catch {
@@ -226,7 +256,8 @@ final class CourseDownloadService: CourseDownloadServiceProtocol {
     
     func cancelAllCourseDownloads(_ course: Course) async throws {
         for module in course.modules {
-            if downloadManager.isDownloading(id: module.id) {
+            let currentState = getOrCreateStatePublisher(for: module.id).value
+            if currentState == .downloading || currentState == .paused {
                 do {
                     try await cancelDownload(moduleID: module.id)
                 } catch {
@@ -237,29 +268,24 @@ final class CourseDownloadService: CourseDownloadServiceProtocol {
     }
     
     func getModuleDownloadState(moduleID: UUID) -> AnyPublisher<DownloadState, Never> {
-        if let publisher = statePublishers[moduleID] {
-            return publisher.eraseToAnyPublisher()
+        return getOrCreateStatePublisher(for: moduleID).eraseToAnyPublisher()
+    }
+    
+    // NEW: Method to refresh state from persistence
+    func refreshModuleState(moduleID: UUID) {
+        if let savedState = modelStorage.getDownloadState(id: moduleID) {
+            let publisher = getOrCreateStatePublisher(for: moduleID)
+            publisher.send(savedState.state)
+            
+            if savedState.state == .downloaded {
+                let progressPublisher = getOrCreateProgressPublisher(for: moduleID)
+                progressPublisher.send(1.0)
+            }
         }
-        
-        // Create new publisher with initial value from storage
-        let initialState = modelStorage.getDownloadState(id: moduleID)?.state ?? .notDownloaded
-        let publisher = CurrentValueSubject<DownloadState, Never>(initialState)
-        statePublishers[moduleID] = publisher
-        
-        return publisher.eraseToAnyPublisher()
     }
     
     func getModuleProgress(moduleID: UUID) -> AnyPublisher<Double, Never> {
-        if let publisher = progressPublishers[moduleID] {
-            return publisher.eraseToAnyPublisher()
-        }
-        
-        // Create new publisher with initial value from storage
-        let initialProgress = modelStorage.getDownloadState(id: moduleID)?.progress ?? 0.0
-        let publisher = CurrentValueSubject<Double, Never>(initialProgress)
-        progressPublishers[moduleID] = publisher
-        
-        return publisher.eraseToAnyPublisher()
+        return getOrCreateProgressPublisher(for: moduleID).eraseToAnyPublisher()
     }
     
     func getCourseDownloadProgress(courseID: UUID) -> AnyPublisher<Double, Never> {

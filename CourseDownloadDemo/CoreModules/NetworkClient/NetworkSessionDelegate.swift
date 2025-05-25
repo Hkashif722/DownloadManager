@@ -20,13 +20,28 @@ class NetworkSessionDelegate: NSObject, URLSessionDownloadDelegate {
     }
     
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let moduleID = downloadTask.taskDescription.flatMap({ UUID(uuidString: $0) }),
-              let manager = downloadManager else {
-            logger.error("Failed to get module ID or manager is nil")
+        logger.info("Download finished callback received for task: \(downloadTask.taskIdentifier)")
+        
+        // Debug logging
+        logger.info("Task description: \(downloadTask.taskDescription ?? "nil")")
+        
+        guard let taskDescription = downloadTask.taskDescription else {
+            logger.error("Download task has no task description")
             return
         }
         
-        logger.info("Download completed for task with module ID: \(moduleID.uuidString)")
+        guard let moduleID = UUID(uuidString: taskDescription) else {
+            logger.error("Failed to parse module ID from task description: \(taskDescription)")
+            return
+        }
+        
+        guard let manager = downloadManager else {
+            logger.error("Download manager is nil")
+            return
+        }
+        
+        logger.info("Download completed for module ID: \(moduleID.uuidString)")
+        logger.info("Temporary file location: \(location.path)")
         
         // CRITICAL FIX: Handle the file synchronously within this callback
         // The temporary file at 'location' is only valid during this method call
@@ -35,6 +50,12 @@ class NetworkSessionDelegate: NSObject, URLSessionDownloadDelegate {
         let safeTempLocation = tempDir.appendingPathComponent(UUID().uuidString)
         
         do {
+            // Check if source file exists
+            if !fileManager.fileExists(atPath: location.path) {
+                logger.error("Source file doesn't exist at: \(location.path)")
+                return
+            }
+            
             // Copy immediately while the file is still valid
             try fileManager.copyItem(at: location, to: safeTempLocation)
             logger.info("Successfully copied download to safe location: \(safeTempLocation.path)")
@@ -51,6 +72,16 @@ class NetworkSessionDelegate: NSObject, URLSessionDownloadDelegate {
         }
     }
     
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        guard let taskDescription = downloadTask.taskDescription,
+              let moduleID = UUID(uuidString: taskDescription) else {
+            return
+        }
+        
+        let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        logger.debug("Download progress for \(moduleID.uuidString): \(Int(progress * 100))%")
+    }
+    
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let downloadTask = task as? URLSessionDownloadTask,
               let moduleID = downloadTask.taskDescription.flatMap({ UUID(uuidString: $0) }),
@@ -59,10 +90,17 @@ class NetworkSessionDelegate: NSObject, URLSessionDownloadDelegate {
         }
         
         if let error = error {
-            logger.error("Download task failed with error: \(error.localizedDescription)")
+            let urlError = error as NSError
+            if urlError.code == NSURLErrorCancelled {
+                logger.info("Download was cancelled for module: \(moduleID.uuidString)")
+            } else {
+                logger.error("Download task failed with error: \(error.localizedDescription)")
+            }
             Task {
                 manager.handleDownloadFailure(id: moduleID, error: error)
             }
+        } else {
+            logger.info("Download task completed successfully for module: \(moduleID.uuidString)")
         }
     }
     

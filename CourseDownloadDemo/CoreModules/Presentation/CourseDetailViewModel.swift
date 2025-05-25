@@ -36,6 +36,7 @@ final class CourseDetailViewModel: ObservableObject {
         
         setupSubscriptions()
         updateInitialState()
+        refreshAllModuleStates() // NEW: Ensure states are refreshed from persistence
     }
     
     private func setupSubscriptions() {
@@ -76,6 +77,16 @@ final class CourseDetailViewModel: ObservableObject {
         }
         
         updateDownloadingStatus()
+    }
+    
+    // NEW: Method to refresh all module states from persistence
+    private func refreshAllModuleStates() {
+        for module in course.modules {
+            // Cast to concrete type to access the refresh method
+            if let downloadService = courseDownloadService as? CourseDownloadService {
+                downloadService.refreshModuleState(moduleID: module.id)
+            }
+        }
     }
     
     private func updateDownloadingStatus() {
@@ -165,6 +176,10 @@ final class CourseDetailViewModel: ObservableObject {
             do {
                 try await courseDownloadService.deleteDownload(moduleID: moduleID)
                 logger.info("Deleted download for module: \(moduleID)")
+                // After deletion, refresh the state to ensure UI updates
+                if let downloadService = courseDownloadService as? CourseDownloadService {
+                    downloadService.refreshModuleState(moduleID: moduleID)
+                }
             } catch {
                 handleError(error, context: "Failed to delete download")
             }

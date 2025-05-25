@@ -1,18 +1,13 @@
-// NetworkClientProtocol.swift
-import Foundation
-import Combine
-
-
-
 // NetworkClient.swift
 import Foundation
 import Combine
 import OSLog
 
 final class NetworkClient: NetworkClientProtocol {
-    private var session: URLSession
+    private var session: URLSession?
     private let configuration: URLSessionConfiguration
     private let logger: Logger
+    private var sessionDelegate: URLSessionDownloadDelegate?
     
     init(
         backgroundIdentifier: String? = nil,
@@ -29,17 +24,29 @@ final class NetworkClient: NetworkClientProtocol {
             self.configuration = URLSessionConfiguration.default
         }
         
-        self.session = URLSession(configuration: self.configuration)
+        // Don't create session yet - wait for delegate to be set
     }
     
     func configureBGSessionWithDelegate(_ delegate: URLSessionDownloadDelegate) {
+        self.sessionDelegate = delegate
         self.session = URLSession(configuration: self.configuration, delegate: delegate, delegateQueue: nil)
         logger.info("Configured background session with delegate")
     }
     
+    private func getSession() -> URLSession {
+        if let session = self.session {
+            return session
+        }
+        
+        // Create default session if no delegate was set
+        let defaultSession = URLSession(configuration: self.configuration)
+        self.session = defaultSession
+        return defaultSession
+    }
+    
     func download(url: URL) async throws -> (URL, URLResponse) {
         do {
-            return try await session.download(from: url)
+            return try await getSession().download(from: url)
         } catch {
             logger.error("Download failed: \(error.localizedDescription)")
             throw mapError(error)
@@ -48,15 +55,19 @@ final class NetworkClient: NetworkClientProtocol {
     
     func downloadWithProgress(url: URL) -> (task: URLSessionDownloadTask, progress: Progress) {
         let request = URLRequest(url: url)
-        let task = session.downloadTask(with: request)
+        let currentSession = getSession()
+        let task = currentSession.downloadTask(with: request)
         let progress = task.progress
+        
         logger.info("Created download task for URL: \(url.absoluteString)")
+        logger.info("Using session with delegate: \(currentSession.delegate != nil ? "YES" : "NO")")
+        
         return (task, progress)
     }
     
     func getAllTasks() async -> [URLSessionTask] {
         return await withCheckedContinuation { continuation in
-            session.getAllTasks { tasks in
+            getSession().getAllTasks { tasks in
                 continuation.resume(returning: tasks)
             }
         }

@@ -1,7 +1,4 @@
 // DownloadManager.swift
-// DownloadManager.swift
-// DownloadManager.swift
-// DownloadManager.swift
 import Foundation
 import Combine
 import OSLog
@@ -31,6 +28,7 @@ final class DownloadManager: DownloadManagerProtocol {
     private var downloadTasks: [UUID: DownloadTaskInfo] = [:]
     private let progressSubject = PassthroughSubject<(UUID, Double), Never>()
     private let stateChangeSubject = PassthroughSubject<(UUID, DownloadState), Never>()
+    private let downloadCompletionSubject = PassthroughSubject<(UUID, URL), Never>()
     
     // MARK: - Protocol Requirements
     var downloadProgress: AnyPublisher<(UUID, Double), Never> {
@@ -39,6 +37,10 @@ final class DownloadManager: DownloadManagerProtocol {
     
     var downloadStateChange: AnyPublisher<(UUID, DownloadState), Never> {
         stateChangeSubject.eraseToAnyPublisher()
+    }
+    
+    var downloadCompletion: AnyPublisher<(UUID, URL), Never> {
+        downloadCompletionSubject.eraseToAnyPublisher()
     }
     
     // MARK: - Initialization
@@ -73,13 +75,70 @@ final class DownloadManager: DownloadManagerProtocol {
             return
         }
         
+        // CRITICAL: Ensure delegate is configured before creating task
+        if sessionDelegate == nil {
+            logger.error("Session delegate not configured! Setting it up now.")
+            self.sessionDelegate = NetworkSessionDelegate(downloadManager: self)
+            networkClient.configureBGSessionWithDelegate(sessionDelegate!)
+        }
+        
         // Create new download task
         let (task, progress) = networkClient.downloadWithProgress(url: url)
+        
+        // CRITICAL: Set task description BEFORE starting the task
         task.taskDescription = id.uuidString
+        
+        logger.info("Created download task with description: \(task.taskDescription ?? "nil")")
         
         // Observe progress with weak self to avoid retain cycle
         let progressObserver = progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
-            self?.progressSubject.send((id, progress.fractionCompleted))
+            guard let self = self else { return }
+            
+            let fractionCompleted = progress.fractionCompleted
+            self.logger.debug("Progress update for \(id.uuidString): \(Int(fractionCompleted * 100))%")
+            self.progressSubject.send((id, fractionCompleted))
+            
+            // FAIL-SAFE: If progress reaches 100% but completion hasn't been called
+            if fractionCompleted >= 1.0 {
+                self.logger.warning("Download progress reached 100% for \(id.uuidString), checking if completion was missed")
+                
+                // Give the delegate a moment to fire
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard let self = self else { return }
+                    
+                    // Check if this download is still in our active tasks
+                    if let taskInfo = self.downloadTasks[id], taskInfo.task.state == .completed {
+                        self.logger.warning("Download completed but delegate wasn't called for \(id.uuidString)")
+                        
+                        // Check if we can find the downloaded file
+                        if let response = taskInfo.task.response,
+                           let suggestedFilename = response.suggestedFilename {
+                            
+                            // Try to find the file in temp directory
+                            let tempDir = self.fileManager.temporaryDirectory
+                            let possiblePaths = [
+                                tempDir.appendingPathComponent(suggestedFilename),
+                                tempDir.appendingPathComponent("CFNetworkDownload_\(suggestedFilename)")
+                            ]
+                            
+                            for path in possiblePaths {
+                                if self.fileManager.fileExists(atPath: path.path) {
+                                    self.logger.info("Found completed download at \(path.path)")
+                                    Task {
+                                        await self.handleDownloadCompletion(id: id, tempURL: path)
+                                    }
+                                    return
+                                }
+                            }
+                        }
+                        
+                        // If we can't find the file, mark as failed
+                        self.logger.error("Download completed but file not found for \(id.uuidString)")
+                        self.stateChangeSubject.send((id, .failed))
+                        self.cleanupTask(id: id)
+                    }
+                }
+            }
         }
         
         let taskInfo = DownloadTaskInfo(
@@ -184,18 +243,14 @@ final class DownloadManager: DownloadManagerProtocol {
             // Move file to permanent location
             try fileManager.moveItem(at: tempURL, to: destinationURL)
             
-            // Update state
-            stateChangeSubject.send((id, .downloaded))
+            // Send final progress update
+            progressSubject.send((id, 1.0))
             
-            // Save file location to storage
-            await MainActor.run {
-                DIContainer.shared.modelStorage.saveDownloadState(
-                    id: id,
-                    state: .downloaded,
-                    progress: 1.0,
-                    localURL: destinationURL
-                )
-            }
+            // Send completion event with the final URL
+            downloadCompletionSubject.send((id, destinationURL))
+            
+            // Send the state change
+            stateChangeSubject.send((id, .downloaded))
             
             logger.info("Download completed for \(id.uuidString) at \(destinationURL.path)")
         } catch {
